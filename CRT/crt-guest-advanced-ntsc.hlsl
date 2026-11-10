@@ -463,7 +463,7 @@ float ntsc_shrp;
 //!DEFAULT 0.25
 //!MIN 0.25
 //!MAX 0.75
-//!STEP 0.01
+//!STEP 0.05
 float ntsc_fonts;
 
 //!PARAMETER
@@ -1738,6 +1738,11 @@ float get_luma(float3 c)
 	return dot(c,float3(0.2989, 0.5870, 0.1140));
 }
 
+float get_luma_sharpen(float3 c)
+{
+	return dot(c,float3(0.299, 0.587, 0.114));
+}
+
 float swoothstep(float e0,float e1,float x)
 {
 	return clamp((x-e0)/(e1-e0),0.0,1.0);
@@ -1953,11 +1958,6 @@ float3 jnoise(float3 v)
 	return v;
 }
 
-float smothstep (float e0, float e1, float x)
-{
-   return clamp((x - e0) / (e1 - e0), 0.0, 1.0);
-}
-
 float2 psrnd(float2 TexCoord, float FrameCount) {
     float3 p = float3(TexCoord * 16758.5453, FrameCount);
     float x = frac(sin(dot(p, float3(12.9898, 78.233, 3.183))) * 43758.5453);
@@ -1975,9 +1975,9 @@ float RFNOISE0 = RFNOISE*RFNOISE + 0.00001;
     float lns = float(abs(res1-0.5) < 0.2*RFNOISE0);
     float cny = float(abs(res2-0.5) < 0.5*RFNOISE0);
     float cnz = float(abs(res3-0.5) < 0.5*RFNOISE0);
-    lns = lns*smothstep(0.5-0.2*RFNOISE0, 0.5+0.2*RFNOISE0, res1) * 0.66 - 0.33*lns;
-    cny = cny*smothstep(0.5-0.5*RFNOISE0, 0.5+0.5*RFNOISE0, res2)  - 0.5*cny;
-    cnz = cnz*smothstep(0.5-0.5*RFNOISE0, 0.5+0.5*RFNOISE0, res3)  - 0.5*cnz;	
+    lns = lns*swoothstep(0.5-0.2*RFNOISE0, 0.5+0.2*RFNOISE0, res1) * 0.66 - 0.33*lns;
+    cny = cny*swoothstep(0.5-0.5*RFNOISE0, 0.5+0.5*RFNOISE0, res2)  - 0.5*cny;
+    cnz = cnz*swoothstep(0.5-0.5*RFNOISE0, 0.5+0.5*RFNOISE0, res3)  - 0.5*cnz;	
     return float3(lns, cny, cnz);
 }
 
@@ -2202,7 +2202,7 @@ float4 Pass4(float2 texcoord)
 float4 Pass5(float2 texcoord)
 {
 	float2 vtexcoord=texcoord*float2(speedup, 1.0);
-	float NOrgSize = (OrgSize.x < 400.0) ? OrgSize.x : OrgSize.x / max(round(OrgSize.x / 300.0), 1.0);
+	float NOrgSize = (OrgSize.x < 450.0) ? OrgSize.x : OrgSize.x / max(round(OrgSize.x / 300.0), 1.0);
 	float phase = (ntsc_phase < 1.5) ? ((NOrgSize > 300.0 || (OrgSize.x > 400.0 && OrgSize.y > 250.0)) ? 2.0 : 3.0) : ((ntsc_phase > 2.5) ? 3.0 : 2.0);
 	if(ntsc_phase==4.0)phase=3.0; else if (ntsc_phase == 5.0) phase = 2.0;
 	float ntsc_sizex = (OrgSize.x < 400.0) ? OrgSize.x : (phase == 2.0) ? 320.0 : 256.0;
@@ -2220,7 +2220,7 @@ float4 Pass5(float2 texcoord)
 	if(ntsc_fields== 0.0) MERGE=0.0;else
 	if(ntsc_fields== 1.0) MERGE=1.0;
 	float MIT = ntsc_taps;
-	MIT = smothstep(16.0, 8.0, MIT) * 0.325;
+	MIT = swoothstep(16.0, 8.0, MIT) * 0.325;
 	float3x3 mix_m = float3x3(BRIGHTNESS,FRINGING,FRINGING,ARTIFACT,2.0*SATURATION,0.0,ARTIFACT,0.0,2.0*SATURATION);
 	if (vtexcoord.x > 1.0) return 0.0.xxxx; else
 	{
@@ -2246,11 +2246,12 @@ float4 Pass5(float2 texcoord)
 	float c2 = get_luma(T0I.SampleLevel(sLin, TexD + xx,0).rgb);
 	float cb = get_luma(T0I.SampleLevel(sLin, TexD + xx + xx,0).rgb);
 
-	float line0  = smothstep(0.01, 0.0, min(abs(c1-c0),abs(c2-c1)));
-	float line1  = max(smothstep(0.01, 0.0, min(abs(ca-c0),abs(c2-cb))), line0);
-	float line2  = max(smothstep(0.01, 0.0, min(abs(ca-c2),abs(c0-cb))), line1);
-	float line3  = smothstep(0.01, 0.0, min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))));
-	line2 = lerp(line2, line0, line3);
+	float line0  = swoothstep(0.01, 0.0, min(abs(c1-c0),abs(c2-c1)));
+	float line1  = max(swoothstep(0.01, 0.0, min(abs(ca-c0),abs(c2-cb))), line0);
+	float line2  = max(swoothstep(0.20, 0.0, max(abs(ca-c0),abs(c2-cb))), line1);
+	float line3  = max(swoothstep(0.01, 0.0, min(abs(ca-c2),abs(c0-cb))), line2);
+	float line4  = swoothstep(0.01, 0.0, min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))));
+	line2 = lerp(line3, line0, line4);
 	float nd = (ntsc_dith > 0.005) ? ntsc_dith : max(res-1.0, 0.0);
 	res /= 1.0 + (1.0-line2) * nd;
 	}
@@ -2305,7 +2306,7 @@ float4 Pass5(float2 texcoord)
 float4 Pass6(float2 texcoord)
 {
 	float2 tex_c=texcoord+float2(0.5/speedup*OrgSize.z/4.0,0.0);
-	float NOrgSize = (OrgSize.x < 400.0) ? OrgSize.x : OrgSize.x / max(round(OrgSize.x / 300.0), 1.0);
+	float NOrgSize = (OrgSize.x < 450.0) ? OrgSize.x : OrgSize.x / max(round(OrgSize.x / 300.0), 1.0);
 	float phase = (ntsc_phase < 1.5) ? ((NOrgSize > 300.0 || (OrgSize.x > 400.0 && OrgSize.y > 250.0)) ? 2.0 : 3.0) : ((ntsc_phase > 2.5) ? 3.0 : 2.0);
 	if (ntsc_phase == 4.0) phase = 3.0; else if (ntsc_phase == 5.0) phase = 2.0;
 	const int TAPS_2_phase=32;
@@ -2349,11 +2350,12 @@ float4 Pass6(float2 texcoord)
 	float c2 = T03.SampleLevel(sPt, TexD + xx,0).a;
 	float cb = T03.SampleLevel(sPt, TexD + xx + xx,0).a;
 
-	float line0  = smothstep(0.01, 0.0, min(abs(c1-c0),abs(c2-c1)));
-	float line1  = max(smothstep(0.01, 0.0, min(abs(ca-c0),abs(c2-cb))), line0);
-	float line2  = max(smothstep(0.01, 0.0, min(abs(ca-c2),abs(c0-cb))), line1);
-	float line3  = smothstep(0.01, 0.0, min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))));
-	line2 = lerp(line2, line0, line3);
+	float line0  = swoothstep(0.01, 0.0, min(abs(c1-c0),abs(c2-c1)));
+	float line1  = max(swoothstep(0.01, 0.0, min(abs(ca-c0),abs(c2-cb))), line0);
+	float line2  = max(swoothstep(0.20, 0.0, max(abs(ca-c0),abs(c2-cb))), line1);
+	float line3  = max(swoothstep(0.01, 0.0, min(abs(ca-c2),abs(c0-cb))), line2);
+	float line4  = swoothstep(0.01, 0.0, min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))));
+	line2 = lerp(line3, line0, line4);
 	float nd = (ntsc_dith > 0.005) ? ntsc_dith : max(res-1.0, 0.0);
 	res /= 1.0 + (1.0-line2) * nd;
 	}
@@ -2375,7 +2377,7 @@ float4 Pass6(float2 texcoord)
 	float3 dx = float3(one_x.x, one_x.y, 0.0);
 	float mit = 1.0;
 	float loob = ntsc_taps;
-	loob = max(loob, 8.0); mit = 1.0 + 0.04*pow(smothstep(16.0, 8.0, loob), 0.5);
+	loob = max(loob, 8.0); mit = 1.0 + 0.04*pow(swoothstep(16.0, 8.0, loob), 0.5);
 	float3 xd = dx; dx.x*=mit;
 	int loopstart = int(32.0 - loob);
 	int j = loopstart;
@@ -2442,7 +2444,7 @@ float4 Pass7(float2 texcoord)
     float2 vtex_c0=texcoord / float2(speedup, 1.0);
     float2 vtex_c1=(floor(vtex_c0*OrgSize.xy)+0.5)*OrgSize.zw;
     float2 vtex_c=texcoord+float2(0.5*(OrgSize.z/auto_rez)/4.0,0.0);
-    float NOrgSize = (OrgSize.x < 400.0) ? OrgSize.x : OrgSize.x / max(round(OrgSize.x / 300.0), 1.0);
+    float NOrgSize = (OrgSize.x < 450.0) ? OrgSize.x : OrgSize.x / max(round(OrgSize.x / 300.0), 1.0);
     float phase = (ntsc_phase < 1.5) ? ((NOrgSize > 300.0 || (OrgSize.x > 400.0 && OrgSize.y > 250.0)) ? 2.0 : 3.0) : ((ntsc_phase > 2.5) ? 3.0 : 2.0);
     if (ntsc_phase == 4.0) phase = 3.0; else if (ntsc_phase == 5.0) phase = 2.0;
 
@@ -2483,11 +2485,15 @@ float4 Pass7(float2 texcoord)
 
     if (ntsc_fonts > 0.255)
     {
+        float m1 = max(max(c0,c1),c2);
+        float m2 = min(min(c0,c1),c2);
+        float cont = m1+m2;
+
         float b1  = T03.SampleLevel(sPt, tcoorb - yy,0).a;
         float d1  = T03.SampleLevel(sPt, tcoorb + yy,0).a;
         float d2  = T03.SampleLevel(sPt, tcoorb + xx + yy,0).a;
 
-        float maxdif = float(0.5 * (abs(c0-c1) + abs(c1-c2)) > (1.0 - ntsc_fonts)) * float(abs(c2-c0) < 0.05);
+        float maxdif = float(0.5 * (abs(c0-c1) + abs(c1-c2)) > (cont - ntsc_fonts)) * float(abs(c2-c0) < 0.05);
         float linecb = swoothstep(0.1, 0.0, max(abs(c1-b1), abs(c1-d1)));
         linecb = linecb * float(abs(c1-b1) < 0.05 || abs(c2-d2) < 0.05);
 
@@ -2496,6 +2502,13 @@ float4 Pass7(float2 texcoord)
         d2 = T04.SampleLevel(sLin, tcoord + 9.0*yy,0).x;
    
         maxdif = maxdif * float((abs(d1-b1) > 0.2 || abs(d2-b1) > 0.2));
+
+        b1 = T04.SampleLevel(sLin, tcoord         ,0).x;
+        d1 = T04.SampleLevel(sLin, tcoord - 7.0*yy,0).x;
+        d2 = T04.SampleLevel(sLin, tcoord + 7.0*yy,0).x;
+
+        maxdif = max(maxdif, maxdif * float((abs(d1-b1) > 0.2 || abs(d2-b1) > 0.2)));
+
 
         float xdif1 = 0.0;
         float xdif2 = 0.0;
@@ -2510,10 +2523,23 @@ float4 Pass7(float2 texcoord)
             cb = T04.SampleLevel(sLin, tcoord +  j*xx,0).x;
             xdif1 = max(abs(ca - c0) - th, xdif1);
             xdif2 = max(abs(cb - c2) - th, xdif2);
+            ca = T04.SampleLevel(sLin, tcoord -  i*xx - yy,0).x;
+            c0 = T04.SampleLevel(sLin, tcoord -  j*xx - yy,0).x;
+            c2 = T04.SampleLevel(sLin, tcoord +  i*xx - yy,0).x;
+            cb = T04.SampleLevel(sLin, tcoord +  j*xx - yy,0).x;  
+            xdif1 = max(abs(ca-c0)-th, xdif1);
+            xdif2 = max(abs(cb-c2)-th, xdif2);   
+      
+            ca = T04.SampleLevel(sLin, tcoord -  i*xx + yy,0).x;
+            c0 = T04.SampleLevel(sLin, tcoord -  j*xx + yy,0).x;
+            c2 = T04.SampleLevel(sLin, tcoord +  i*xx + yy,0).x;
+            cb = T04.SampleLevel(sLin, tcoord +  j*xx + yy,0).x;  
+            xdif1 = max(abs(ca-c0)-th, xdif1);
+            xdif2 = max(abs(cb-c2)-th, xdif2);
         }
 
         float linex   = swoothstep(0.0, 0.125, min(xdif1, xdif2));
-        diffboost     = min(linex * linecb * maxdif, 0.625);
+        diffboost     = min(linex * linecb * maxdif, 0.75);
     }
 
     float3 ref = T04.SampleLevel(sLin, tcoord,0).xyz;
@@ -2617,16 +2643,16 @@ float4 Pass8(float2 texcoord)
 	if(NDEBLUR>1.125)
 	{
 	float2 toxcoord=(floor(OrgSize.xy*texcoord)+0.5)*OrgSize.zw;
-	float l01=get_luma(T02.SampleLevel(sLin,texcoord+2.0*g01,0).rgb);
-	float l21=get_luma(T02.SampleLevel(sLin,texcoord+2.0*g21,0).rgb);
-	float l11=get_luma(T02.SampleLevel(sLin,toxcoord        ,0).rgb);
+	float l01=get_luma_sharpen(T02.SampleLevel(sLin,texcoord+2.0*g01,0).rgb);
+	float l21=get_luma_sharpen(T02.SampleLevel(sLin,texcoord+2.0*g21,0).rgb);
+	float l11=get_luma_sharpen(T02.SampleLevel(sLin,toxcoord        ,0).rgb);
 	float dth = T05.SampleLevel(sLin,texcoord,0).a;
 	float DEB = max(lerp(0.375*NDEBLUR, NDEBLUR, max(1.0-DSMART, dth)), 1.0);
 	float d11=min(min(l01,l21),l11);
 	l11=max(max(l01,l21),l11);
-	float lmn=min(min(get_luma(c01),get_luma(c21)),get_luma(c11));float ln1=min(lerp(d11,lmn,lmn),lmn);
-	float lmx=max(max(get_luma(c01),get_luma(c21)),get_luma(c11));float lx1=max(lerp(lmx,l11,lmx),lmx);
-	float r11=get_luma(res);
+	float lmn=min(min(get_luma_sharpen(c01),get_luma_sharpen(c21)),get_luma_sharpen(c11));float ln1=min(lerp(d11,lmn,lmn),lmn);
+	float lmx=max(max(get_luma_sharpen(c01),get_luma_sharpen(c21)),get_luma_sharpen(c11));float lx1=max(lerp(lmx,l11,lmx),lmx);
+	float r11=get_luma_sharpen(res);
 	float di1=max((r11-ln1),0.0)+0.00001;di1=pow(di1,DEB);
 	float di2=max((lx1-r11),0.0)+0.00001;di2=pow(di2,DEB);
 	float ratio=di1/(di1+di2);
@@ -2743,7 +2769,7 @@ float4 Pass13(float2 texcoord)
     {
     c=fetch_pixel(fuxcoord);
     }
-    float intera = T0I.SampleLevel(sLin,fuxcoord,0).a;
+    float intera = T0I.SampleLevel(sLin,float2(0.75,0.75),0).a;
     float gamma_in=gamma_i;
     c=pow(c,gamma_in);
     if(fuxcoord.x>0.5)gamma_in=intera;else gamma_in=1.0/gamma_in;
