@@ -80,11 +80,11 @@ float ntsc_phase;
 float nscale;
 
 //!PARAMETER
-//!LABEL NTSC De-dithering Booster: -0.01 : Auto | 0.0 : OFF
-//!DEFAULT -0.01
-//!MIN -0.01
-//!MAX 2.5
-//!STEP 0.01
+//!LABEL NTSC De-dithering Booster: 0: OFF | 1: CB+BAR | 2: CB
+//!DEFAULT 1
+//!MIN 0
+//!MAX 2
+//!STEP 1
 float ntsc_dith;
 
 //!PARAMETER
@@ -336,6 +336,11 @@ float swoothstep(float e0,float e1,float x)
 	return clamp((x-e0)/(e1-e0),0.0,1.0);
 }
 
+float3 smstep(float3 e0, float3 e1, float3 x)
+{
+	return clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+}
+
 float2 psrnd(float2 TexCoord, float FrameCount) {
     float3 p = float3(TexCoord * 16758.5453, FrameCount);
     float x = frac(sin(dot(p, float3(12.9898, 78.233, 3.183))) * 43758.5453);
@@ -401,25 +406,33 @@ float4 Pass1(float2 texcoord)
 
 	float res = nscale;
 
-	if (abs(ntsc_dith) > 0.005 && float4(float2(GetInputSize()),GetInputPt()).y < 300.0 && (phase == 2.0 || ntsc_phase > 3.5))
+	if (ntsc_dith > 0.5 && float4(float2(GetInputSize()),GetInputPt()).y < 300.0 && (phase == 2.0 || ntsc_phase > 3.5))
 	{
 	float2 TexD = (floor(vtexcoord * float4(float2(GetInputSize()),GetInputPt()).xy) + 0.5)*float4(float2(GetInputSize()),GetInputPt()).zw;
 	float2 xx = float2(float4(float2(GetInputSize()),GetInputPt()).z, 0.0);
 
-	float ca = get_luma(INPUT.SampleLevel(sPt,TexD - xx - xx,0).rgb);
-	float c0 = get_luma(INPUT.SampleLevel(sPt,TexD - xx,0).rgb);
-	float c1 = get_luma(INPUT.SampleLevel(sPt,TexD,0).rgb);
-	float c2 = get_luma(INPUT.SampleLevel(sPt,TexD + xx,0).rgb);
-	float cb = get_luma(INPUT.SampleLevel(sPt,TexD + xx + xx,0).rgb);
-
-	float line0  = swoothstep(0.01, 0.0, min(abs(c1-c0),abs(c2-c1)));
-	float line1  = max(swoothstep(0.01, 0.0, min(abs(ca-c0),abs(c2-cb))), line0);
-	float line2  = max(swoothstep(0.20, 0.0, max(abs(ca-c0),abs(c2-cb))), line1);
-	float line3  = max(swoothstep(0.01, 0.0, min(abs(ca-c2),abs(c0-cb))), line2);
-	float line4  = swoothstep(0.01, 0.0, min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))));
-	line2 = lerp(line3, line0, line4);
-	float nd = (ntsc_dith > 0.005) ? ntsc_dith : max(res-1.0, 0.0);
-	res /= 1.0 + (1.0-line2) * nd;
+	float2 yy = float2(0.0, float4(float2(GetInputSize()),GetInputPt()).w);
+	float3 ca = float3(get_luma(INPUT.SampleLevel(sPt,TexD - xx - xx - yy,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD - xx - xx,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD - xx - xx + yy,0).rgb));
+	float3 c0 = float3(get_luma(INPUT.SampleLevel(sPt,TexD - xx - yy,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD - xx,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD - xx + yy,0).rgb));
+	float3 c1 = float3(get_luma(INPUT.SampleLevel(sPt,TexD - yy,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD + yy,0).rgb));
+	float3 c2 = float3(get_luma(INPUT.SampleLevel(sPt,TexD + xx - yy,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD + xx,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD + xx + yy,0).rgb));
+	float3 cb = float3(get_luma(INPUT.SampleLevel(sPt,TexD + xx + xx - yy,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD + xx + xx,0).rgb), get_luma(INPUT.SampleLevel(sPt,TexD + xx + xx + yy,0).rgb));
+	float3 line0  = step(min(abs(c1-c0),abs(c2-c1)), 0.01.xxx);
+	float3 line1  = max(step(min(abs(ca-c0),abs(c2-cb)), 0.01.xxx), line0);
+	float3 line2  = max(step(min(abs(ca-c2),abs(c0-cb)), 0.01.xxx), line1);
+	float3 line3  = max(step(max(abs(ca-c0),abs(c2-cb)), 0.15.xxx), line2);
+	float3 line4  = max(smstep(0.075.xxx, 0.35*max(c1,1.0-c1), max(min(abs(c1-cb),abs(c0-c2)),min(abs(c1-ca),abs(c0-c2)))), line3);
+	float3 line5  = step(min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))), 0.025.xxx);
+	line4 = (ntsc_dith < 1.5) ? line3 : line4;
+	line2 = lerp(line4, line0, line5);
+	float lmode = (ntsc_dith < 1.5) ? 0.0 : 1.0;
+	float line6 = 0.0;
+	if (ntsc_dith > 1.5) line6 = min(step(min(abs(c1.y-c1.x),abs(c1.y-c1.z)),0.03), max(step(max(abs(c0.y-c0.x),abs(c0.y-c0.z)),0.03), step(max(abs(c2.y-c2.x),abs(c2.y-c2.z)),0.03)));
+	line2.y = ((abs(c1.y-c1.x)+min(abs(c0.y-c0.x),abs(c2.y-c2.x))) < lmode*0.025) ? max(line2.y,line2.x) : line2.y;
+	line2.y = ((abs(c1.y-c1.z)+min(abs(c0.y-c0.z),abs(c2.y-c2.z))) < lmode*0.025) ? max(line2.y,line2.z) : line2.y;
+	float lin2 = max(min(line2.y, max(line2.x,line2.z)), line6);
+	float nd = max(res-1.0, 0.0);
+	res /= 1.0 + (1.0-lin2) * nd;
 	}
 
 	if(MERGE>0.5)
@@ -505,25 +518,33 @@ float4 Pass2(float2 texcoord)
 
 	float res = nscale;
    
-	if (abs(ntsc_dith) > 0.005 && float4(float2(GetInputSize()),GetInputPt()).y < 300.0 && (phase == 2.0 || ntsc_phase > 3.5))
+	if (ntsc_dith > 0.5 && float4(float2(GetInputSize()),GetInputPt()).y < 300.0 && (phase == 2.0 || ntsc_phase > 3.5))
 	{
 	float2 TexD = (floor(tex_c * float4(float2(GetInputSize()),GetInputPt()).xy) + 0.5)*float4(float2(GetInputSize()),GetInputPt()).zw;
 	float2 xx = float2(float4(float2(GetInputSize()),GetInputPt()).z, 0.0);
 
-	float ca = PAAL_T02.SampleLevel(sLin,TexD - xx - xx,0).a;
-	float c0 = PAAL_T02.SampleLevel(sLin,TexD - xx,0).a;
-	float c1 = PAAL_T02.SampleLevel(sLin,TexD,0).a;
-	float c2 = PAAL_T02.SampleLevel(sLin,TexD + xx,0).a;
-	float cb = PAAL_T02.SampleLevel(sLin,TexD + xx + xx,0).a;
-
-	float line0  = swoothstep(0.01, 0.0, min(abs(c1-c0),abs(c2-c1)));
-	float line1  = max(swoothstep(0.01, 0.0, min(abs(ca-c0),abs(c2-cb))), line0);
-	float line2  = max(swoothstep(0.20, 0.0, max(abs(ca-c0),abs(c2-cb))), line1);
-	float line3  = max(swoothstep(0.01, 0.0, min(abs(ca-c2),abs(c0-cb))), line2);
-	float line4  = swoothstep(0.01, 0.0, min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))));
-	line2 = lerp(line3, line0, line4);
-	float nd = (ntsc_dith > 0.005) ? ntsc_dith : max(res-1.0, 0.0);
-	res /= 1.0 + (1.0-line2) * nd;
+	float2 yy = float2(0.0, float4(float2(GetInputSize()),GetInputPt()).w);
+	float3 ca = float3(PAAL_T02.SampleLevel(sLin,TexD - xx - xx - yy,0).a, PAAL_T02.SampleLevel(sLin,TexD - xx - xx,0).a, PAAL_T02.SampleLevel(sLin,TexD - xx - xx + yy,0).a);
+	float3 c0 = float3(PAAL_T02.SampleLevel(sLin,TexD - xx - yy,0).a, PAAL_T02.SampleLevel(sLin,TexD - xx,0).a, PAAL_T02.SampleLevel(sLin,TexD - xx + yy,0).a);
+	float3 c1 = float3(PAAL_T02.SampleLevel(sLin,TexD - yy,0).a, PAAL_T02.SampleLevel(sLin,TexD,0).a, PAAL_T02.SampleLevel(sLin,TexD + yy,0).a);
+	float3 c2 = float3(PAAL_T02.SampleLevel(sLin,TexD + xx - yy,0).a, PAAL_T02.SampleLevel(sLin,TexD + xx,0).a, PAAL_T02.SampleLevel(sLin,TexD + xx + yy,0).a);
+	float3 cb = float3(PAAL_T02.SampleLevel(sLin,TexD + xx + xx - yy,0).a, PAAL_T02.SampleLevel(sLin,TexD + xx + xx,0).a, PAAL_T02.SampleLevel(sLin,TexD + xx + xx + yy,0).a);
+	float3 line0  = step(min(abs(c1-c0),abs(c2-c1)), 0.01.xxx);
+	float3 line1  = max(step(min(abs(ca-c0),abs(c2-cb)), 0.01.xxx), line0);
+	float3 line2  = max(step(min(abs(ca-c2),abs(c0-cb)), 0.01.xxx), line1);
+	float3 line3  = max(step(max(abs(ca-c0),abs(c2-cb)), 0.15.xxx), line2);
+	float3 line4  = max(smstep(0.075.xxx, 0.35*max(c1,1.0-c1), max(min(abs(c1-cb),abs(c0-c2)),min(abs(c1-ca),abs(c0-c2)))), line3);
+	float3 line5  = step(min(max(abs(c0-c2),abs(c1-ca)),max(abs(c0-c2),abs(c1-cb))), 0.025.xxx);
+	line4 = (ntsc_dith < 1.5) ? line3 : line4;
+	line2 = lerp(line4, line0, line5);
+	float lmode = (ntsc_dith < 1.5) ? 0.0 : 1.0;
+	float line6 = 0.0;
+	if (ntsc_dith > 1.5) line6 = min(step(min(abs(c1.y-c1.x),abs(c1.y-c1.z)),0.03), max(step(max(abs(c0.y-c0.x),abs(c0.y-c0.z)),0.03), step(max(abs(c2.y-c2.x),abs(c2.y-c2.z)),0.03)));
+	line2.y = ((abs(c1.y-c1.x)+min(abs(c0.y-c0.x),abs(c2.y-c2.x))) < lmode*0.025) ? max(line2.y,line2.x) : line2.y;
+	line2.y = ((abs(c1.y-c1.z)+min(abs(c0.y-c0.z),abs(c2.y-c2.z))) < lmode*0.025) ? max(line2.y,line2.z) : line2.y;
+	float lin2 = max(min(line2.y, max(line2.x,line2.z)), line6);
+	float nd = max(res-1.0, 0.0);
+	res /= 1.0 + (1.0-lin2) * nd;
 	}
 
 	float ntsc_sizex = (ntsc_samp > 1.5) ? float4(float2(GetInputSize()),GetInputPt()).x : ((float4(float2(GetInputSize()),GetInputPt()).x < 400.0) ? float4(float2(GetInputSize()),GetInputPt()).x : (phase == 2.0) ? 320.0 : 256.0);
@@ -664,16 +685,13 @@ float4 Pass3(float2 texcoord)
         linecb = linecb * float(abs(c1-b1) < 0.05 || abs(c2-d2) < 0.05);
 
         b1 = PAAL_T03.SampleLevel(sLin,tcoord,0).x;
-        d1 = PAAL_T03.SampleLevel(sLin,tcoord - 9.0*yy,0).x;
-        d2 = PAAL_T03.SampleLevel(sLin,tcoord + 9.0*yy,0).x;
-   
-        maxdif = maxdif * float((abs(d1-b1) > 0.2 || abs(d2-b1) > 0.2));
 
-        b1 = PAAL_T03.SampleLevel(sLin,tcoord,0).x;
-        d1 = PAAL_T03.SampleLevel(sLin,tcoord - 7.0*yy,0).x;
-        d2 = PAAL_T03.SampleLevel(sLin,tcoord + 7.0*yy,0).x;
-
-        maxdif = max(maxdif, maxdif * float((abs(d1-b1) > 0.2 || abs(d2-b1) > 0.2)));
+        for (float i = 3.0; i <= 12.0; i = i + 3.0)
+        {
+            d1 = PAAL_T03.SampleLevel(sLin,tcoord - i*yy,0).x;
+            d2 = PAAL_T03.SampleLevel(sLin,tcoord + i*yy,0).x;
+            maxdif = max(maxdif, maxdif * float((abs(d1-b1) > 0.25 || abs(d2-b1) > 0.25)));
+        }
 
         float xdif1 = 0.0;
         float xdif2 = 0.0;
